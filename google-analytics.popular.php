@@ -12,13 +12,19 @@ class Google_Analytics_Popular {
 	public $gclient_id;
 	public $gredirect;
 	public $token;
+	public $client_secret;
+
+	public $gapi_url;
 	
 	public function __construct()
 	{
 		$this->goauth_url = 'https://accounts.google.com/o/oauth2/auth';
 		$this->gclient_id = get_option('gapp_client_id');
 		$this->gredirect = get_option('gapp_client_redirect');
-		$this->token = get_option( 'goauth_token' )
+		$this->token = get_option( 'goauth_token' );
+		$this->client_secret = get_option('gapp_client_secret');
+
+		$this->gapi_url = 'https://www.googleapis.com/analytics/v3';
 		$this->hooks();
 	}
 	
@@ -29,6 +35,11 @@ class Google_Analytics_Popular {
 		add_action( 'admin_init', array( $this, 'save' ) );
 		add_action( 'template_redirect', array( $this, 'store_access_token' ) );
 		add_filter( 'query_vars', array( $this, 'qv' ) );
+		add_action( 'admin_head', array( $this, 'js' ) );
+		add_action( 'admin_head', array( $this, 'css' ) );
+
+		// AJAX
+		add_action( 'wp_ajax_update_ga_account', array( $this, 'update_ga_account' ) );
 	}
 
 	public function qv( $qv )
@@ -39,18 +50,56 @@ class Google_Analytics_Popular {
 	
 	public function js()
 	{
-		
+		?>
+		<script>
+		jQuery(document).ready(function(){
+			jQuery('#ga_account').change(function(){
+				jQuery('#ga-account-select-spinner').show().css( 'display', 'inline');
+				var val = jQuery(this).val();
+				var _ga_acct_nonce = '<?php echo wp_create_nonce("_ga_acct_nonce") ?>';
+
+				var ajax_data = {
+					action 			: "update_ga_account",
+					ga_account 		: val,
+					_ga_acct_nonce 	: _ga_acct_nonce,
+				}
+
+				jQuery.post( ajaxurl, ajax_data, function(data) {
+					//console.log('foo');
+					if( data == "true" )
+					{
+						jQuery('#ga-account-select-spinner').fadeOut(600).html('<span class="ajax_success"><?php _e( "Saved.", "gapp" ) ?></span>' );
+					}
+					else
+						jQuery('#ga-account-select-spinner').fadeOut(600).html('<span class="ajax_error"><?php _e( "Save Failed.", "gapp" ) ?></span>' );
+					console.debug(data);
+				});
+			});
+		});
+		</script>
+		<?php
 	}
 	
 	public function css()
 	{
-		
+		?>
+		<style>
+		#ga-account-select-spinner {
+			display:none;
+			font-weight:bold;
+			margin-left:10px;
+		}
+		#ga-account-select-spinner img { height: 20px; width: 20px; vertical-align:middle; }
+		.ajax_error { color: #f00; }
+		.ajax_success { color: #107802;}
+		</style>
+		<?php
 	}
 	
 	public function register_admin()
 	{
 		// TODO: Multisite Compat
-		add_plugins_page( __( 'Google Analyticsa Popular Posts', 'gapp' ), __( 'GA Popular Posts', 'gapp'), 'administrator', 'gapp-options', array( $this, 'admin' ) );
+		add_plugins_page( __( 'Google Analytics Popular Posts', 'gapp' ), __( 'GA Popular Posts', 'gapp'), 'administrator', 'gapp-options', array( $this, 'admin' ) );
 	}
 	
 	public function admin()
@@ -85,7 +134,26 @@ class Google_Analytics_Popular {
 			{
 				if( get_option( 'goauth_token' ) )
 				{
-					echo get_option( 'goauth_token' );
+					//echo get_option( 'goauth_token' );
+					?>
+					<h2><?php _e( 'Choose Account to Use', 'gapp' ) ?></h2>
+					<form action="" method="post">
+						<select name="ga_account" id="ga_account">
+					<?php
+					$accounts = $this->get_accounts();
+					$active_account = get_option( 'ga_active_account' );
+					foreach( $accounts->items as $ga_account )
+					{
+						if( $ga_account->id == $active_account )
+							echo '<option selected value="' . esc_attr( $ga_account->id ) . '">' . esc_html( $ga_account->name . ' (UA-' . $ga_account->id . '-XX)' );
+						else
+							echo '<option value="' . esc_attr( $ga_account->id ) . '">' . esc_html( $ga_account->name . ' (UA-' . $ga_account->id . '-XX)' );
+					}
+					?>
+						</select>
+						<p id="ga-account-select-spinner"><img src="<?php echo plugins_url( 'images/spinner.gif', __FILE__ ); ?>" /></p>
+					</form>
+					<?php
 				}
 				else
 				{
@@ -116,7 +184,7 @@ class Google_Analytics_Popular {
 			return false;
 
 		global $wp;
-		$url = $this->goauth_url . '?response_type=code&client_id=' . $this->gclient_id . '&redirect_uri=' . $this->gredirect . '&scope=https://www.googleapis.com/auth/userinfo.email&state=' .  home_url('') . $_SERVER['REQUEST_URI'];
+		$url = $this->goauth_url . '?response_type=code&approval_type=auto&client_id=' . $this->gclient_id . '&redirect_uri=' . $this->gredirect . '&scope=https://www.googleapis.com/auth/analytics.readonly+https://www.googleapis.com/auth/userinfo.email&access_type=offline&state=' .  home_url('') . $_SERVER['REQUEST_URI'];
 		$url = esc_url_raw( $url );
 		return $url;
 	}
@@ -135,15 +203,28 @@ class Google_Analytics_Popular {
 		{
 			$f = explode( '=', $part );
 			if( $f[0] == 'state' )
-				$redirect_url = $f[1];
+				$redirect_url = urldecode( $f[1] );
 
 			if( $f[0] == 'code' )
-				$token = $f[1];
+				$token = urldecode( $f[1] );
 		}
-		update_option( 'goauth_token', $token );
-		wp_redirect( urldecode($redirect_url) );
-		
-		//echo'<pre>';print_r($parts);echo'</pre>';
+
+		$args = array(
+					'code'			=> $token,
+					'client_id'		=> $this->gclient_id,
+					'client_secret'	=> $this->client_secret,
+					'redirect_uri'	=> $this->gredirect,
+					'grant_type'	=> 'authorization_code',
+				);
+
+		$response = wp_remote_post( 'https://accounts.google.com/o/oauth2/token', array( 
+			'body' => $args
+			)
+		);
+		$json = wp_remote_retrieve_body( $response );
+		$json = json_decode( $json );
+		update_option( 'goauth_token', $json->access_token );
+		wp_redirect( urldecode($redirect_url) );		
 		exit;
 	}
 
@@ -152,6 +233,25 @@ class Google_Analytics_Popular {
 		global $wp_rewrite;
 		add_rewrite_endpoint( 'gappauth', EP_PERMALINK );
 		$wp_rewrite->flush_rules();
+	}
+
+	public function get_accounts()
+	{
+		$url = $this->gapi_url . '/management/accounts';
+		$url = esc_url_raw( $url );
+		$response = wp_remote_get( $url, array( 'headers' => array( 'Authorization' => 'OAuth ' . $this->token) ) );
+		$json = json_decode( wp_remote_retrieve_body( $response ) );
+		return $json;
+	}
+
+	/* AJAX HANDLERS */
+	public function update_ga_account()
+	{
+		if( update_option( 'ga_active_account', $_POST['ga_account'] ) )
+			echo "true";
+		else
+			echo "false";
+		exit;
 	}
 }
 
