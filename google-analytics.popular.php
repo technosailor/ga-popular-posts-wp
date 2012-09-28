@@ -15,6 +15,7 @@ class Google_Analytics_Popular {
 	public $client_secret;
 
 	public $gapi_url;
+	public $gapi_core_url;
 	
 	public function __construct()
 	{
@@ -25,6 +26,7 @@ class Google_Analytics_Popular {
 		$this->client_secret = get_option('gapp_client_secret');
 
 		$this->gapi_url = 'https://www.googleapis.com/analytics/v3';
+		$this->gapi_core_url = 'https://www.googleapis.com/analytics/v3/data/ga';
 		$this->hooks();
 	}
 	
@@ -40,6 +42,7 @@ class Google_Analytics_Popular {
 
 		// AJAX
 		add_action( 'wp_ajax_update_ga_account', array( $this, 'update_ga_account' ) );
+		add_action( 'wp_ajax_update_ga_account_webprop', array( $this, 'update_ga_account_webprop' ) );
 	}
 
 	public function qv( $qv )
@@ -53,25 +56,49 @@ class Google_Analytics_Popular {
 		?>
 		<script>
 		jQuery(document).ready(function(){
+
+			// Ajax Update Account
 			jQuery('#ga_account').change(function(){
 				jQuery('#ga-account-select-spinner').show().css( 'display', 'inline');
 				var val = jQuery(this).val();
 				var _ga_acct_nonce = '<?php echo wp_create_nonce("_ga_acct_nonce") ?>';
 
-				var ajax_data = {
+				var ajax_data_ga_account = {
 					action 			: "update_ga_account",
 					ga_account 		: val,
 					_ga_acct_nonce 	: _ga_acct_nonce,
 				}
 
-				jQuery.post( ajaxurl, ajax_data, function(data) {
-					//console.log('foo');
+				jQuery.post( ajaxurl, ajax_data_ga_account, function(data) {
 					if( data == "true" )
 					{
 						jQuery('#ga-account-select-spinner').fadeOut(600).html('<span class="ajax_success"><?php _e( "Saved.", "gapp" ) ?></span>' );
 					}
 					else
 						jQuery('#ga-account-select-spinner').fadeOut(600).html('<span class="ajax_error"><?php _e( "Save Failed.", "gapp" ) ?></span>' );
+				});
+			});
+
+			// Ajax Update Webprops
+			jQuery('#ga_account_webprop').change(function(){
+				jQuery('#ga-account-webprop-select-spinner').show().css( 'display', 'inline');
+				var val = jQuery(this).val();
+				var _ga_acct_webprop_nonce = '<?php echo wp_create_nonce("_ga_acct_webprop_nonce") ?>';
+
+				var ajax_data_ga_account_webprop = {
+					action 			: "update_ga_account_webprop",
+					ga_account_wp 		: val,
+					_ga_acct_nonce 	: _ga_acct_webprop_nonce,
+				}
+
+				jQuery.post( ajaxurl, ajax_data_ga_account_webprop, function(data) {
+					if( data == "true" )
+					{
+						jQuery('#ga-account-webprop-select-spinner').fadeOut(600).html('<span class="ajax_success"><?php _e( "Saved.", "gapp" ) ?></span>' );
+					}
+					else
+						jQuery('#ga-account-webprop-select-spinner').fadeOut(600).html('<span class="ajax_error"><?php _e( "Save Failed.", "gapp" ) ?></span>' );
+
 					console.debug(data);
 				});
 			});
@@ -84,12 +111,12 @@ class Google_Analytics_Popular {
 	{
 		?>
 		<style>
-		#ga-account-select-spinner {
+		#ga-account-select-spinner, #ga-account-webprop-select-spinner {
 			display:none;
 			font-weight:bold;
 			margin-left:10px;
 		}
-		#ga-account-select-spinner img { height: 20px; width: 20px; vertical-align:middle; }
+		#ga-account-select-spinner img, #ga-account-webprop-select-spinner img { height: 20px; width: 20px; vertical-align:middle; }
 		.ajax_error { color: #f00; }
 		.ajax_success { color: #107802;}
 		</style>
@@ -134,14 +161,16 @@ class Google_Analytics_Popular {
 			{
 				if( get_option( 'goauth_token' ) )
 				{
-					//echo get_option( 'goauth_token' );
+					echo get_option( 'goauth_token' );
 					?>
-					<h2><?php _e( 'Choose Account to Use', 'gapp' ) ?></h2>
-					<form action="" method="post">
-						<select name="ga_account" id="ga_account">
+					<h3><?php _e( 'Choose Account to Use', 'gapp' ) ?></h3>
 					<?php
 					$accounts = $this->get_accounts();
 					$active_account = get_option( 'ga_active_account' );
+					?>
+
+					<select name="ga_account" id="ga_account">
+					<?php
 					foreach( $accounts->items as $ga_account )
 					{
 						if( $ga_account->id == $active_account )
@@ -150,10 +179,38 @@ class Google_Analytics_Popular {
 							echo '<option value="' . esc_attr( $ga_account->id ) . '">' . esc_html( $ga_account->name . ' (UA-' . $ga_account->id . '-XX)' );
 					}
 					?>
-						</select>
-						<p id="ga-account-select-spinner"><img src="<?php echo plugins_url( 'images/spinner.gif', __FILE__ ); ?>" /></p>
-					</form>
+					</select>
+					<p id="ga-account-select-spinner"><img src="<?php echo plugins_url( 'images/spinner.gif', __FILE__ ); ?>" /></p>
+
 					<?php
+					if( $active_account )
+					{
+						$webprops = $this->get_account_webprops( $active_account );
+						?>
+						<h3><?php _e('Choose Webproperty to use', 'gapp') ?></h3>
+						<select name="ga_account_webprop" id="ga_account_webprop">
+						<?php
+						$active_webprop = get_option( 'ga_active_account_webprop' );
+						foreach( $webprops->items as $webprop )
+						{
+							if( $webprop->id == $active_webprop )
+								echo '<option selected value="' . esc_attr( $webprop->id ) . '">' . esc_html( $webprop->name . ' (' . $webprop->id . ') ' ) . '</option>';
+							else
+								echo '<option value="' . esc_attr( $webprop->id ) . '">' . esc_html( $webprop->name . ' (' . $webprop->id . ') ' ) . '</option>';
+						}
+						?>
+						</select>
+						<p id="ga-account-webprop-select-spinner"><img src="<?php echo plugins_url( 'images/spinner.gif', __FILE__ ); ?>" /></p>
+						<?php
+					}
+
+					if( $active_account && $active_webprop )
+					{
+						$data = $this->get_ga_visits( $active_account );
+						echo '<pre>';
+						print_r( $data );
+						echo '</pre>';
+					}
 				}
 				else
 				{
@@ -184,7 +241,9 @@ class Google_Analytics_Popular {
 			return false;
 
 		global $wp;
-		$url = $this->goauth_url . '?response_type=code&approval_type=auto&client_id=' . $this->gclient_id . '&redirect_uri=' . $this->gredirect . '&scope=https://www.googleapis.com/auth/analytics.readonly+https://www.googleapis.com/auth/userinfo.email&access_type=offline&state=' .  home_url('') . $_SERVER['REQUEST_URI'];
+		$url = $this->goauth_url . '?response_type=code&approval_prompt=force&access_type=offline&client_id=' . $this->gclient_id . 
+		'&redirect_uri=' . $this->gredirect . 
+		'&scope=https://www.googleapis.com/auth/analytics.readonly&state=' .  home_url('') . $_SERVER['REQUEST_URI'];
 		$url = esc_url_raw( $url );
 		return $url;
 	}
@@ -223,6 +282,7 @@ class Google_Analytics_Popular {
 		);
 		$json = wp_remote_retrieve_body( $response );
 		$json = json_decode( $json );
+		update_option( 'goauth_token_refresh', $json->refresh_token ); #expires_in
 		update_option( 'goauth_token', $json->access_token );
 		wp_redirect( urldecode($redirect_url) );		
 		exit;
@@ -235,11 +295,39 @@ class Google_Analytics_Popular {
 		$wp_rewrite->flush_rules();
 	}
 
+	/* Google API Handlers */
 	public function get_accounts()
 	{
 		$url = $this->gapi_url . '/management/accounts';
 		$url = esc_url_raw( $url );
-		$response = wp_remote_get( $url, array( 'headers' => array( 'Authorization' => 'OAuth ' . $this->token) ) );
+		$response = wp_remote_get( $url, array( 'headers' => array( 'Authorization' => 'Bearer ' . $this->token) ) );
+		$json = json_decode( wp_remote_retrieve_body( $response ) );
+		return $json;
+	}
+
+	public function get_account_webprops( $account_id )
+	{
+		$url = $this->gapi_url . '/management/accounts/' . $account_id . '/webproperties';
+		$url = esc_url_raw( $url );
+		$response = wp_remote_get( $url, array( 'headers' => array( 'Authorization' => 'Bearer ' . $this->token) ) );
+		$json = json_decode( wp_remote_retrieve_body( $response ) );
+		return $json;
+	}
+
+	public function get_ga_visits( $account, $show = 10, $days = 30 )
+	{
+		$ids = 'ga:' . $account;
+		$now = time();
+		$before = $now - ( $days * 86400 );
+		$start = date( 'Y-m-d', $before );
+		$end = date( 'Y-m-d', $now );
+		$metrics = apply_filters( 'ga_metrics_criteria', array( 'ga:visits' ) );
+		$metrics = implode( ',', $metrics );
+
+		$url = $this->gapi_core_url . '?ids=' . urlencode( $ids ) . '&start-date=' . urlencode( $start ) . '&end-date=' . urlencode( $end ) . '&metrics=' . urlencode( $metrics ) . '&max-results=' . $show;
+		//$url = esc_url_raw( $url );
+		echo $url;
+		$response = wp_remote_get( $url, array( 'headers' => array( 'Authorization' => 'Bearer ' . $this->token) ) );
 		$json = json_decode( wp_remote_retrieve_body( $response ) );
 		return $json;
 	}
@@ -248,6 +336,15 @@ class Google_Analytics_Popular {
 	public function update_ga_account()
 	{
 		if( update_option( 'ga_active_account', $_POST['ga_account'] ) )
+			echo "true";
+		else
+			echo "false";
+		exit;
+	}
+
+	public function update_ga_account_webprop()
+	{
+		if( update_option( 'ga_active_account_webprop', $_POST['ga_account_wp'] ) )
 			echo "true";
 		else
 			echo "false";
